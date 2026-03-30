@@ -11,6 +11,16 @@ st.set_page_config(page_title="ふるさと納税 CSV変換ツール", page_icon
 st.title("📄 ふるさと納税 CSV変換ツール")
 st.caption("寄付証明書PDF → TPS2000インポート用CSV（Shift-JIS）")
 
+# セッション状態の初期化
+if "all_results" not in st.session_state:
+    st.session_state.all_results = []
+if "csv_ready" not in st.session_state:
+    st.session_state.csv_ready = False
+if "csv_bytes" not in st.session_state:
+    st.session_state.csv_bytes = None
+if "csv_filename" not in st.session_state:
+    st.session_state.csv_filename = ""
+
 # APIキー入力
 st.markdown("---")
 api_key = st.text_input("APIキー（sk-ant-...）", type="password", placeholder="sk-ant-...")
@@ -30,6 +40,10 @@ uploaded_files = st.file_uploader(
 
 if uploaded_files and api_key:
     if st.button("▶ AIで読み取り開始", type="primary"):
+        st.session_state.all_results = []
+        st.session_state.csv_ready = False
+        st.session_state.csv_bytes = None
+
         client = anthropic.Anthropic(api_key=api_key)
         all_results = []
         errors = []
@@ -70,7 +84,7 @@ if uploaded_files and api_key:
 
         for i, f in enumerate(uploaded_files):
             status.text(f"処理中: {f.name} ({i+1}/{len(uploaded_files)})")
-            progress.progress((i) / len(uploaded_files))
+            progress.progress(i / len(uploaded_files))
 
             try:
                 b64 = base64.standard_b64encode(f.read()).decode("utf-8")
@@ -110,21 +124,6 @@ if uploaded_files and api_key:
                 st.error(f"✗ {err}")
 
         if all_results:
-            st.success(f"✓ {len(all_results)}件 抽出完了　合計 {sum(int(r.get('amount',0)) for r in all_results):,}円")
-
-            # 結果テーブル表示
-            st.markdown("### 抽出結果")
-            table_data = [
-                {
-                    "受領年月日": r.get("donation_date", ""),
-                    "自治体名": r.get("municipality", ""),
-                    "金額": f"{int(r.get('amount', 0)):,}円"
-                }
-                for r in all_results
-            ]
-            st.table(table_data)
-
-            # CSV生成
             donor_name = all_results[0].get("donor_name", "氏名不明").replace(" ", "")
             year = all_results[0].get("donation_date", "")[:4] or "2025"
             csv_filename = f"{donor_name}_{year}_ふるさと納税.csv"
@@ -139,15 +138,36 @@ if uploaded_files and api_key:
             writer = csv.writer(buf)
             writer.writerow(header)
             writer.writerows(rows)
-
             csv_bytes = buf.getvalue().encode("shift_jis", errors="replace")
 
-            st.download_button(
-                label="⬇ CSVをダウンロード",
-                data=csv_bytes,
-                file_name=csv_filename,
-                mime="text/csv"
-            )
+            st.session_state.all_results = all_results
+            st.session_state.csv_bytes = csv_bytes
+            st.session_state.csv_filename = csv_filename
+            st.session_state.csv_ready = True
+
+# 結果とダウンロードボタンの表示（セッション状態から）
+if st.session_state.csv_ready and st.session_state.all_results:
+    all_results = st.session_state.all_results
+    st.success(f"✓ {len(all_results)}件 抽出完了　合計 {sum(int(r.get('amount', 0)) for r in all_results):,}円")
+
+    st.markdown("### 抽出結果")
+    table_data = [
+        {
+            "受領年月日": r.get("donation_date", ""),
+            "自治体名": r.get("municipality", ""),
+            "金額": f"{int(r.get('amount', 0)):,}円"
+        }
+        for r in all_results
+    ]
+    st.table(table_data)
+
+    st.download_button(
+        label="⬇ CSVをダウンロード",
+        data=st.session_state.csv_bytes,
+        file_name=st.session_state.csv_filename,
+        mime="text/csv",
+        key="csv_download"
+    )
 
 elif uploaded_files and not api_key:
     st.warning("APIキーを入力してください。")
